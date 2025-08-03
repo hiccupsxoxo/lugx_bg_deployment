@@ -1,0 +1,94 @@
+# Namespace (only if not already created)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iit-dev
+
+---
+
+# Persistent Volume Claim for MySQL Data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-data
+  namespace: iit-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: gp2
+
+---
+
+# Deployment for MySQL (Game Service DB)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: iit-dev
+  labels:
+    app: game-mysql  # Must match Service selector
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Safe for stateful DBs
+  selector:
+    matchLabels:
+      app: game-mysql
+  template:
+    metadata:
+      labels:
+        app: game-mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+              protocol: TCP
+          env:
+            - name: MYSQL_DATABASE
+              value: gamedb
+            - name: MYSQL_USER
+              value: user
+            - name: MYSQL_PASSWORD
+              value: password
+            - name: MYSQL_ROOT_PASSWORD
+              value: root
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+          resources:        # Cloud cost control (recommended)
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-data
+      restartPolicy: Always
+
+---
+
+# Service for MySQL (Game Service DB)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: iit-dev
+  labels:
+    app: game-mysql
+spec:
+  type: ClusterIP
+  selector:
+    app: game-mysql
+  ports:
+    - name: mysql
+      protocol: TCP
+      port: 3307         # Exposed port inside the cluster
+      targetPort: 3306   # MySQL container default port

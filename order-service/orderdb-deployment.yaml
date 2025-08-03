@@ -1,0 +1,96 @@
+# Namespace (only needed if not already created)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iit-dev
+
+---
+
+# Persistent Volume Claim for Order DB Data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: order-data
+  namespace: iit-dev
+  labels:
+    app: orderdb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: gp2
+
+---
+
+# Deployment for Order Service MySQL DB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderdb
+  namespace: iit-dev
+  labels:
+    app: orderdb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: orderdb
+  template:
+    metadata:
+      labels:
+        app: orderdb
+    spec:
+      containers:
+        - name: orderdb
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+              protocol: TCP
+          env:
+            - name: MYSQL_DATABASE
+              value: orders
+            - name: MYSQL_USER
+              value: user
+            - name: MYSQL_PASSWORD
+              value: password
+            - name: MYSQL_ROOT_PASSWORD
+              value: root
+          volumeMounts:
+            - name: order-data
+              mountPath: /var/lib/mysql
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      volumes:
+        - name: order-data
+          persistentVolumeClaim:
+            claimName: order-data
+      restartPolicy: Always
+
+---
+
+# Service for Order Service MySQL DB
+apiVersion: v1
+kind: Service
+metadata:
+  name: orderdb
+  namespace: iit-dev
+  labels:
+    app: orderdb
+spec:
+  type: ClusterIP
+  selector:
+    app: orderdb
+  ports:
+    - name: mysql
+      protocol: TCP
+      port: 3308         # Exposed cluster port for Order DB
+      targetPort: 3306   # Default MySQL container port
