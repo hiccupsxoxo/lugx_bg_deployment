@@ -1,58 +1,71 @@
-name: EKS CI/CD Deployment
+name: GKE CI/CD Deployment (Blue-Green)
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "Which environment to deploy?"
+        required: true
+        default: "green"
+        type: choice
+        options:
+          - blue
+          - green
 
 jobs:
   deploy:
-    name: Deploy Kubernetes Services to EKS (Blue-Green)
+    name: Deploy to GKE with Blue-Green
     runs-on: ubuntu-latest
 
     env:
-      CLUSTER_NAME: 2506634_lugx-cloud
-      REGION: us-east-1
-      DEPLOY_TARGET: green  # 🔁 Change to blue to switch traffic
+      GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+      GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      DEPLOY_TARGET: ${{ github.event.inputs.deploy_target || 'green' }}
 
     steps:
-      - name: ✅ Checkout source code
+      - name: 📦 Checkout source code
         uses: actions/checkout@v4
 
-      - name: 🧠 Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.REGION }}
-          role-to-assume: arn:aws:iam::221119316828:role/GitHubActionsEKSRole
-          role-session-name: GitHubActionsSession
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      - name: 🔍 Debug AWS identity
-        run: aws sts get-caller-identity
+      - name: 📡 Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          install_components: 'gke-gcloud-auth-plugin'
 
-      - name: 📡 Update kubeconfig for EKS cluster
+      - name: 🧠 Configure gcloud for GKE
         run: |
-          aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+          gcloud config set container/use_application_default_credentials true
+          gcloud container clusters get-credentials "$GKE_CLUSTER" \
+            --region "$GKE_LOCATION" \
+            --project "$GCP_PROJECT_ID"
 
-      - name: 🧪 Validate kubeconfig
+      - name: 🔍 Verify GKE context
         run: |
           kubectl config current-context
           kubectl get nodes
 
-      - name: 🏗️ Deploy ClickHouse (stateful, shared across envs)
+      - name: 🧱 Deploy ClickHouse (shared component)
         run: |
           echo "Deploying ClickHouse..."
           kubectl apply -f clickhouse/k8clickhouse.yaml
 
-      - name: 🚀 Deploy selected environment (${{ env.DEPLOY_TARGET }})
+      - name: 🚀 Deploy to selected environment (${{ env.DEPLOY_TARGET }})
         run: |
-          echo "Deploying from: k8${{ env.DEPLOY_TARGET }}/"
+          echo "Applying manifests from: k8${{ env.DEPLOY_TARGET }}/"
           kubectl apply -f k8${{ env.DEPLOY_TARGET }}/
 
-      - name: 🔁 Patch Services to point to $DEPLOY_TARGET
+      - name: 🔁 Patch services to target ${{ env.DEPLOY_TARGET }}
         run: |
-          echo "Switching service selectors to: $DEPLOY_TARGET"
+          echo "Routing traffic to version: $DEPLOY_TARGET"
 
           kubectl patch service frontend-service -n iit-dev \
             --type=merge \
@@ -70,5 +83,5 @@ jobs:
             --type=merge \
             -p "{\"spec\":{\"selector\":{\"app\":\"analytics-service\",\"version\":\"${DEPLOY_TARGET}\"}}}"
 
-      - name: ✅ Verify deployed pods
+      - name: ✅ List all pods after deployment
         run: kubectl get pods -A
