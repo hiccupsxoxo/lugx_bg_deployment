@@ -1,4 +1,4 @@
-# Namespace (only needed once per cluster)
+# Namespace (apply only once)
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -6,44 +6,44 @@ metadata:
 
 ---
 
-# Deployment for Analytics Service
+# Deployment (Green)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: analytics-api
-  namespace: iit-dev  # ✅ Scoped to namespace for isolation
+  name: analytics-service-green
+  namespace: iit-dev
   labels:
-    app: analytics-api
+    app: analytics-service
+    version: green
 spec:
-  replicas: 1  # ✅ Cost-optimized for coursework/free-tier
+  replicas: 1
   selector:
     matchLabels:
-      app: analytics-api
+      app: analytics-service
+      version: green
   template:
     metadata:
       labels:
-        app: analytics-api
+        app: analytics-service
+        version: green
     spec:
-      imagePullSecrets:
-        - name: dockerhub-secret  # Optional, if you use private Docker Hub
       containers:
-        - name: analytics-api
-          image: nuviii/analytics-service:latest  # ✅ Pulls from Docker Hub
-          imagePullPolicy: Always                  # ✅ Always pull latest image
+        - name: analytics-service
+          image: nuviii/analytics-service:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8087
               protocol: TCP
           env:
             - name: CLICKHOUSE_HOST
-              value: clickhouse
+              value: clickhouse.clickhouse.svc.cluster.local
             - name: CLICKHOUSE_PORT
               value: "8123"
             - name: CLICKHOUSE_USER
               value: default
             - name: CLICKHOUSE_PASSWORD
               value: mypassword123
-              # ⚠️ For production, consider Kubernetes Secret for password
-          resources:  # ✅ Cloud limits to prevent overuse
+          resources:
             requests:
               cpu: "100m"
               memory: "128Mi"
@@ -54,42 +54,43 @@ spec:
 
 ---
 
-# Service for Analytics Service
+# Service (Stable)
 apiVersion: v1
 kind: Service
 metadata:
   name: analytics-service
   namespace: iit-dev
   labels:
-    app: analytics-api
+    app: analytics-service
 spec:
-  type: ClusterIP  # ✅ Suitable for Ingress routing in EKS
+  type: ClusterIP
   selector:
-    app: analytics-api
+    app: analytics-service
+    version: green    # 🔁 Switch to blue or green depending on active deployment
   ports:
     - protocol: TCP
-      port: 8087        # ✅ Exposed port on the service
-      targetPort: 8087  # ✅ Matches containerPort in the Deployment
+      port: 8087
+      targetPort: 8087
 
 ---
 
-# Ingress for Analytics Service
+# Ingress (Stable)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: analytics-ingress
   namespace: iit-dev
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: nginx
   rules:
-    - host: lugx.local
+    - host: analyticsservice.lugx.iit
       http:
         paths:
-          - path: /api/analytics/(.*)
-            pathType: ImplementationSpecific
+          - path: /
+            pathType: Prefix
             backend:
               service:
                 name: analytics-service

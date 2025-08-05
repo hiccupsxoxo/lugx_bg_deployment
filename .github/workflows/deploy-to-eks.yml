@@ -7,12 +7,13 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Kubernetes Services to EKS
+    name: Deploy Kubernetes Services to EKS (Blue-Green)
     runs-on: ubuntu-latest
 
     env:
       CLUSTER_NAME: 2506634_lugx-cloud
       REGION: us-east-1
+      DEPLOY_TARGET: green  # 🔁 Change to blue to switch traffic
 
     steps:
       - name: ✅ Checkout source code
@@ -26,7 +27,6 @@ jobs:
           aws-region: ${{ env.REGION }}
           role-to-assume: arn:aws:iam::221119316828:role/GitHubActionsEKSRole
           role-session-name: GitHubActionsSession
-          # ✅ external-id REMOVED because it's invalid for this action
 
       - name: 🔍 Debug AWS identity
         run: aws sts get-caller-identity
@@ -40,22 +40,35 @@ jobs:
           kubectl config current-context
           kubectl get nodes
 
-      - name: 🚀 Deploy all microservices
+      - name: 🏗️ Deploy ClickHouse (stateful, shared across envs)
         run: |
-          echo "Applying frontend manifests..."
-          kubectl apply -f frontend/
+          echo "Deploying ClickHouse..."
+          kubectl apply -f clickhouse/k8clickhouse.yaml
 
-          echo "Applying game-service manifests..."
-          kubectl apply -f game-service/
+      - name: 🚀 Deploy selected environment (${{ env.DEPLOY_TARGET }})
+        run: |
+          echo "Deploying from: k8${{ env.DEPLOY_TARGET }}/"
+          kubectl apply -f k8${{ env.DEPLOY_TARGET }}/
 
-          echo "Applying order-service manifests..."
-          kubectl apply -f order-service/
+      - name: 🔁 Patch Services to point to $DEPLOY_TARGET
+        run: |
+          echo "Switching service selectors to: $DEPLOY_TARGET"
 
-          echo "Applying clickhouse manifests..."
-          kubectl apply -f clickhouse/
+          kubectl patch service frontend-service -n iit-dev \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"frontend\",\"version\":\"${DEPLOY_TARGET}\"}}}"
 
-          echo "Applying analytics-service manifests..."
-          kubectl apply -f analytics-service/
+          kubectl patch service game-service -n iit-dev \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"game-service\",\"version\":\"${DEPLOY_TARGET}\"}}}"
+
+          kubectl patch service order-service -n iit-dev \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"order-service\",\"version\":\"${DEPLOY_TARGET}\"}}}"
+
+          kubectl patch service analytics-service -n iit-dev \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"analytics-service\",\"version\":\"${DEPLOY_TARGET}\"}}}"
 
       - name: ✅ Verify deployed pods
         run: kubectl get pods -A

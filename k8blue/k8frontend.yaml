@@ -1,0 +1,99 @@
+# Namespace (only applied once per cluster)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iit-dev
+
+---
+
+# Deployment for Frontend (Blue version)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-blue
+  namespace: iit-dev
+  labels:
+    app: frontend
+    version: blue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: blue
+    spec:
+      containers:
+        - name: frontend
+          image: nuviii/frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      restartPolicy: Always
+
+---
+
+# Service (Always same name, switches version with selector)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: iit-dev
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+    version: blue     # 🟢 Change to green in CI/CD to switch traffic
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+
+---
+
+# Ingress (Stable routing via service)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: iit-dev
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: frontend.lugx.iit
+      http:
+        paths:
+          # 🚀 Route /api/analytics/** to analytics-service
+          - path: /api/analytics(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: analytics-service
+                port:
+                  number: 8087
+
+          # 🌐 Route everything else to frontend
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
